@@ -1,0 +1,21 @@
+#
+# Apache/SELinux plud configuration
+#
+# SELinux context mapping with http identifications
+# =================================================
+
+# (Format)
+# <http user>           <domain>:<range>
+#
+# (Example)
+# foo                   user_webapp_t:s0:c0
+# bar                   user_webapp_t:s0:c1
+# baz                   user_webapp_t:s0:c2
+# __anonymous__		anon_webapp_t:s0
+#
+# (Note)
+# - <domain> has to be bounded by httpd_t
+# - __anonymous__ matches all the unauthorized request
+# - '*' matches all the request inclusing authorized
+#   and unauthorized users.
+#

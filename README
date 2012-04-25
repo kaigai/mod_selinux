@@ -1,0 +1,286 @@
+Apache/SELinux plus documentation
+=================================
+
+OVERVIEW
+--------
+The Apache/SELinux plus is an extra module (mod_selinux.so) which enables
+to launch contents-handler (it means both of references to static contents
+and invocations of web applications) with individual and restrictive
+privileges set, based on http authentication.
+
+SELinux assigns a privilege set called as domain or security context for
+each processes on the system, to apply its access control policy.
+The apache/httpd is not an exception. Typically, it works under httpd_t
+domain, and handles all the request come from client. But it is also
+a headache for SELinux, because all the contents handler inherits
+identical security context of apache/httpd daemon process (although each
+requests can come from different users), so SELinux cannot apply valid
+access controls on web application.
+In the result, we need to consign the task for web applications itself,
+but is isn't basically good design, since fewer points to be checked is
+better to reduce security holes.
+
+The mod_selinux.so generates a one-time worker thread for each request,
+and it assigns the worker restrictive domain based on the authentication
+prior to launching contents handlers. The assigned domain reflects the
+identification of users, and SELinux can ident them each other.
+It means we can apply valid access controls on web-applications, and
+makes assurance operating system can prevent violated accesses, even if
+web application contains security bugs or vulnerabilities.
+
+REQUIREMENTS
+------------
+
+It needs the following packages:
+
+ - kernel (2.6.28 or later)
+ - httpd and httpd-devel (2.2.0 or later)
+ - libselinux and libselinux-devel
+ - selinux-policy
+ - checkpolicy (2.0.19 or later)
+ - policycoreutils
+
+BUILD and INSTALLATION
+----------------------
+
+* RPM Installation (preferable)
+
+ # rpm -Uvh mod_selinux-2.2.xxxx-x.xxx.<arch>.rpm
+
+ It installs the modules and configurations on the standard path,
+ and it also installs its security policy module.
+
+* Build from the tarball
+
+ % tar zxvf mod_selinux-2.2.xxxx.tgz
+ % cd mod_selinux-2.2.xxxx
+ % make
+ % make -f /usr/share/selinux/devel/Makefile
+ % su
+ # make install
+ # semodule -i mod_selinux.pp
+
+
+CONFIGURATION
+-------------
+
+ * selinuxServerDomain  <domain/range pair>
+  It specifies the security context of daemon process which accepts
+  the connection come from clients. The mod_selinux.pp security policy
+  module adds a range_transition rule to perform with mcs_systemhigh
+  categories at first. However, in most cases, all the categories are
+  not required for httpd daemon process.
+  This directive allows us to drop unnecessary categories prior to
+  connection accepting. If you only uses category from c0 to c15,
+  we recommend you to set up the directive as follows.
+
+   Example)
+    selinuxServerDomain    *:s0-s0:c0.c15
+
+ * selinuxDomainMap     <filename>
+  It specifies the user/domain mapping file which defines the
+  relationship between username (authenticated by httpd) and
+  a domain/range pair.
+
+   Example)
+    selinuxDomainMap    /var/www/mod_selinux.map
+
+ * selinuxDomainEnv <environment variable>
+  It specifies an environment variable which shows a domain/range
+  pair to be assigned. Some of extra modules supports to set up
+  environment variable depending on metadata of requests.
+  For examle, SetEnvIf allows to set up a certain environment
+  variable based on remote address conditionally. The following
+  configuration is an example which tries to assign "s0:c1" range
+  for connections from 192.168.1.0/24 and "s0:c2" range for
+  192.168.2.0/24.
+
+   Example)
+    SetEnvIf Remote_Addr "192.168.1.[0-9]+$" SELINUX_DOMAIN=*:s0:c1
+    SetEnvIf Remote_Addr "192.168.2.[0-9]+$" SELINUX_DOMAIN=*:s0:c2
+    selinuxDomainEnv    SELINUX_DOMAIN
+
+ * selinuxDomainVal    <domain/range pair>
+  It specifies a domain/range pair to be assigned to content handlers.
+  In normal cases, this directive is placed on the tail of the series
+  of configuration to perform as a fallback when the request does not
+  match selinuxDomainMap/selinuxDomainEnv rules.
+
+   Example)
+    SetEnvIf Remote_Addr "192.168.1.[0-9]+$" SELINUX_DOMAIN=*:s0:c1
+    SetEnvIf Remote_Addr "192.168.2.[0-9]+$" SELINUX_DOMAIN=*:s0:c2
+    selinuxDomainMap    /var/www/mod_selinux.map   ... (1)
+    selinuxDomainEnv    SELINUX_DOMAIN             ... (2)
+    selinuxDomainVal    anon_webapp_t:s0           ... (3)
+
+  In this example, the (1) is checked at first. If the given request is
+  already authenticated and matched to the mapfile, the mod_selinux.so
+  launches the contents handler with an appropriate domain/range pair.
+  Then, (2) is checked. The SELINUX_DOMAIN is set based on Remote_Addr,
+  so it may have a valid value, if the request come from certain networks.
+  Otherwise, the (3) will be checked and any other request is executed
+  with the domain/range pair of "anon_webapp_t:so".
+
+ * selinuxAllowCaches (On|Off)
+  As the apache/httpd official documentation noted, it checks
+  contents caches prior to authentications and domain transition,
+  so it may allow users to bypass access controls.
+  The mod_selinux.so disables contents caches as far as the
+  configuration is not explicitly set.
+  Please understand the risk to use contents caches, before you
+  enables it.
+
+   Example)
+    selinuxAllowCaches        On
+
+CONFIGURATION (mapping files)
+-----------------------------
+
+The selinuxDomainMap can specify a certain mapping file which allows
+to describe relationships between a http-authenticated username and
+a pair of domain/range.
+Each lines of the mapfile mean a relationship as follows:
+
+  kaigai	staff_webapp_t:s0
+
+The lefthand is a username, and the righthand is a domain/range pair.
+We have two special usernames. The "*" matches all the usernames and
+anonymous (unauthenticated) requests, and "__anonymous__" matches
+all the anonymous requests but does not for authenticated users.
+
+When both or either of domain/range part is "*", it means mod_selinux
+does not change the current ones. For example, when "*:s0:c0" is given
+for a user; himainu, his request will be run with "s0:c0" in MCS, but
+it inherits server processes domain.
+
+The '#' and the following characters are handled as comments.
+
+ Example)
+  #
+  # user <--> domain/range mapping
+  #
+  kaigai		*:s0:c0
+  himainu		*::s0:c1
+  panda			staff_webapp_t:s0:c2
+  __anonymous__		anon_webapp_t:s0
+
+USE CASES: virtual host based separation
+----------------------------------------
+If you want to assign an individual security context for each virtual
+hosts, but not necessary for each users, we can utilize selinuxDomainVal
+to set up the domain/range pair.
+In the following example, all the requests to dog.example.com are always
+handled as "*:s0:c1" categories, because it has an only selinuxDomainVal
+directive without any other conditional directives. In the same manner,
+all the requests to cat.example.com are always handled as "*:s0:c2".
+
+ Example)
+  NameVirtualHost *:80
+  
+  <VirtualHost *:80>
+  DocumentRoot          /var/www/html
+  ServerName            dog.example.com
+  selinuxDomainVal       *:s0:c1
+  </VirtualHost>
+
+  <VirtualHost *:80>
+  DocumentRoot          /var/www/html
+  ServerName            cat.example.com
+  selinuxDomainVal      *:s0:c2
+  </VirtualHost>
+
+USE CASES: integration of authentication
+----------------------------------------
+The mod_authn_dbd module performs as an authentication provider for
+Basic/Digest authentication using RDBMS such as PostgreSQL.
+It executes a prepared SQL query with parameters (like username, etc...)
+and fetches the result set. The SELECT statement can contains multiple
+fields in the result, and the only first one is used for authentication.
+Rest of the fields are exported via environment variable. If the field
+is refered by "hoge", it set up AUTHENTICATE_HOGE with contents of
+the field.
+Please remind mod_selinux.so allows to set up a domain/range pair based
+on a certain environment variable using selinuxDomainEnv directive.
+It means we can store all the user account information which includes
+privileges to be performed as within RDBMS.
+
+The following example assumes to use PostgreSQL, and stores user
+account information within uaccount table defined as follows:
+
+  CREATE TABLE uaccount (
+      uname     TEXT PRIMARY KEY,
+      upass     TEXT NOT NULL,
+      udomain   TEXT
+  );
+  INSERT INTO uaccount VALUES ('foo', 'xxx', 'user_webapp_t:s0:c0');
+  INSERT INTO uaccount VALUES ('var', 'yyy', 'staff_webapp_t:s0:c1');
+  INSERT INTO uaccount VALUES ('baz', 'zzz', 'anon_webapp_t:s0:c2');
+
+In addition, mod_authn_dbb module internally uses mod_dbd module which
+requires apr-util-pgsql package to communicate with PostgreSQL.
+Please install it prior to set up:
+
+  # yum install -y apr-util-pgsql
+
+ Example)
+
+  LoadModule dbd_module        modules/mod_dbd.so       ... (1)
+  LoadModule authn_dbd_module  modules/mod_authn_dbd.so
+  LoadModule selinux_module    modules/mod_selinux.so
+
+  DBDriver    pgsql                             ... (2)
+  DBDParams  "dbname=web user=apache"           ... (3)
+
+  <Directory "/var/www/html">
+  # Digest authentication
+  # ---------------------
+  # AuthType               Digest
+  # AuthName               "Secret Zone"
+  # AuthDigestProvider     dbd                  ... (4)
+  # AuthDBDUserRealmQuery  \                    ... (5)
+  #     "SELECT md5(uname || ':' || $2 || ':' || upass), udomain, \
+  #             %s=%s as dummy FROM uaccount WHERE uname = $1"
+
+  # SELinux context mapping
+  # -----------------------
+  selinuxDomainEnv         AUTHENTICATE_UDOMAIN ... (6)
+  selinuxDomainVal         anon_webapp_t:s0
+  </Directory>
+
+At first, we need to load these modules on the (1), if the default
+configuration does not load them in default.
+The (2) specifies what database driver is used by mod_dbd, and the
+(3) specifies raw database connection string. In this example, we
+tries to connect "web" database by the database user of "apache"
+without password. The (4) specifies the dbd module is used for
+authentication, and the (5) is the query to be run.
+
+We don't recommend to use Basic authentication here, because Digest
+is more robust and mod_authn_dbd requires to return hashed password
+but PostgreSQL does not support it.
+
+In addition, the query has storange usage of "%s=%s as dummy", because
+mod_dbd replaces %s to parameter references ($<number>), but its order
+is currently hardwired. The first one is replaced by username, and the
+second one is replaced by realm. However, we need to put the given
+realm prior to username, so we put $1 and $2 directly, and put dummy
+%s to keep it harmless.
+
+The (6) specifies the environment variable of AUTHENTICATE_UDOMAIN which
+holds the result of udomain field from the query. mod_selinux.so will
+assign the fetched domain/range pair on the authenticated user context.
+Otherwise, it assigns anon_webapp_t:s0 via selinuxDomainVal directive.
+
+
+CONTACT
+-------
+
+Author: KaiGai Kohei <kaigai@ak.jp.nec.com>
+
+
+COPYRIGHT and LICENSE
+---------------------
+Copyright (c) 2009 NEC Corporation
+
+This is free software, available under the terms of the Apache Software
+License 2.0. See the file LICENSE for details.

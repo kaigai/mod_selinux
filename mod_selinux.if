@@ -1,0 +1,177 @@
+## <summary>Apache/SELinux plus</summary>
+
+########################################
+## <summary>
+##	Allow a domain to perform as a web server process
+##	with necessary minimum privileges.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`apache_base_webapp',`
+	gen_require(`
+		attribute httpd_server_domains;
+		type httpd_t;
+		type httpd_config_t;
+		type httpd_log_t;
+		type httpd_sys_content_t;
+		type httpd_suexec_exec_t;
+	')
+	########################################
+	#
+	# Local declarations
+	#
+	typeattribute $1 httpd_server_domains;
+
+	typebounds httpd_t $1;
+
+	allow httpd_t $1:process { dyntransition };
+	role system_r types $1;
+
+	########################################
+	#
+	# Minimum privileges to perform as a part of httpd
+	#
+	allow $1 httpd_server_domains:process ~{ ptrace setcurrent setexec setfscreate setrlimit execmem execstack execheap };
+	allow $1 httpd_server_domains:fd use;
+	allow $1 httpd_server_domains:sock_file read_sock_file_perms;
+	allow $1 httpd_server_domains:fifo_file rw_fifo_file_perms;
+	allow $1 httpd_server_domains:shm rw_shm_perms;
+	allow $1 httpd_server_domains:sem rw_sem_perms;
+	allow $1 httpd_server_domains:msgq rw_msgq_perms;
+	allow $1 httpd_server_domains:msg { send receive };
+	allow $1 httpd_server_domains:unix_dgram_socket { rw_socket_perms sendto };
+	allow $1 httpd_server_domains:unix_stream_socket { rw_socket_perms connectto };
+	allow $1 httpd_server_domains:tcp_socket rw_socket_perms;
+	allow $1 httpd_server_domains:udp_socket rw_socket_perms;
+
+	# allow to read the web servers config files
+	allow $1 httpd_config_t:dir list_dir_perms;
+	read_files_pattern($1, httpd_config_t, httpd_config_t)
+	read_lnk_files_pattern($1, httpd_config_t, httpd_config_t)
+
+	# allow to append the web servers log files
+	allow $1 httpd_log_t:dir setattr;
+	create_files_pattern($1, httpd_log_t, httpd_log_t)
+	append_files_pattern($1, httpd_log_t, httpd_log_t)
+	read_files_pattern($1, httpd_log_t, httpd_log_t)
+	read_lnk_files_pattern($1, httpd_log_t, httpd_log_t)
+	logging_log_filetrans($1, httpd_log_t, file)
+
+	# SuExec
+	allow $1 httpd_suexec_exec_t:file read_file_perms;
+
+	# Read-only accesses to system contents
+	allow $1 httpd_sys_content_t:dir list_dir_perms;
+	read_files_pattern($1, httpd_sys_content_t, httpd_sys_content_t)
+	read_lnk_files_pattern($1, httpd_sys_content_t, httpd_sys_content_t)
+
+	# /proc
+	allow $1 httpd_server_domains:dir list_dir_perms;
+	kernel_read_kernel_sysctls($1)
+	kernel_read_system_state($1)
+
+	# allow to communicate via core-networks
+	corenet_all_recvfrom_unlabeled($1)
+	corenet_all_recvfrom_netlabel($1)
+	corenet_tcp_sendrecv_generic_if($1)
+	corenet_udp_sendrecv_generic_if($1)
+	corenet_tcp_sendrecv_generic_node($1)
+	corenet_udp_sendrecv_generic_node($1)
+	corenet_tcp_sendrecv_all_ports($1)
+	corenet_udp_sendrecv_all_ports($1)
+	corenet_sendrecv_http_server_packets($1)
+	corenet_tcp_connect_http_port($1)
+
+	# device nodes
+	dev_read_sysfs($1)
+	dev_read_rand($1)
+	dev_read_urand($1)
+	dev_rw_crypto($1)
+
+	# filesystems
+	fs_getattr_all_fs($1)
+	fs_search_auto_mountpoints($1)
+
+	# misc permissions
+	domain_use_interactive_fds($1)
+
+	files_read_usr_files($1)
+	files_list_mnt($1)
+	files_search_spool($1)
+	files_read_var_lib_files($1)
+	files_search_home($1)
+	files_getattr_home_dir($1)
+	# for modules that want to access /etc/mtab
+	files_read_etc_runtime_files($1)
+	# Allow httpd_t to have access to files such as nisswitch.conf
+	files_read_etc_files($1)
+
+	libs_read_lib_files($1)
+
+	logging_send_syslog_msg($1)
+
+	miscfiles_read_localization($1)
+	miscfiles_read_fonts($1)
+	miscfiles_read_public_files($1)
+	miscfiles_read_certs($1)
+
+	seutil_dontaudit_search_config($1)
+
+	userdom_use_unpriv_users_fds($1)
+')
+
+########################################
+## <summary>
+##	Allos a domain to access UBAC types for web contents
+## </summary>
+## <param name="prefix">
+##	<summary>
+##	The prefix to be used for deriving type names.
+##	</summary>
+## </param>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`apache_user_webapp',`
+	gen_require(`
+		type httpd_$1_content_t;
+		type httpd_$1_htaccess_t;
+		type httpd_$1_script_t;
+		type httpd_$1_script_exec_t;
+		type httpd_$1_script_ro_t;
+		type httpd_$1_script_rw_t;
+		type httpd_$1_script_ra_t;
+	')
+
+	# .htaccess files
+	allow $2 httpd_$1_htaccess_t:file read_file_perms;
+
+	# httpd_builtin_scripting controls them
+	manage_dirs_pattern($2, httpd_$1_script_rw_t, httpd_$1_script_rw_t)
+	manage_files_pattern($2, httpd_$1_script_rw_t, httpd_$1_script_rw_t)
+	manage_lnk_files_pattern($2, httpd_$1_script_rw_t, httpd_$1_script_rw_t)
+	rw_sock_files_pattern($2, httpd_$1_script_rw_t, httpd_$1_script_rw_t)
+
+	allow $2 httpd_$1_script_ra_t:dir { list_dir_perms add_entry_dir_perms };
+	read_files_pattern($2, httpd_$1_script_ra_t, httpd_$1_script_ra_t)
+	append_files_pattern($2, httpd_$1_script_ra_t, httpd_$1_script_ra_t)
+	read_lnk_files_pattern($2, httpd_$1_script_ra_t, httpd_$1_script_ra_t)
+
+	allow $2 httpd_$1_script_ro_t:dir list_dir_perms;
+	read_files_pattern($2, httpd_$1_script_ro_t, httpd_$1_script_ro_t)
+	read_lnk_files_pattern($2, httpd_$1_script_ro_t, httpd_$1_script_ro_t)
+
+	allow $2 httpd_$1_content_t:dir list_dir_perms;
+	read_files_pattern($2, httpd_$1_content_t, httpd_$1_content_t)
+	read_lnk_files_pattern($2, httpd_$1_content_t, httpd_$1_content_t)
+
+	# httpd_enable_cgi controls them
+	domtrans_pattern($2, httpd_$1_script_exec_t, httpd_$1_script_t)
+')
