@@ -1,7 +1,14 @@
+%{!?_httpd_apxs: %{expand: %%global _httpd_apxs %%{_sbindir}/apxs}}
+%{!?_httpd_mmn: %{expand: %%global _httpd_mmn %%(cat %{_includedir}/httpd/.mmn || echo missing-httpd-devel)}}
+# /etc/httpd/conf.d with httpd < 2.4 and defined as /etc/httpd/conf.modules.d with httpd >= 2.4
+%{!?_httpd_modconfdir: %{expand: %%global _httpd_modconfdir %%{_sysconfdir}/httpd/conf.d}}
+%{!?_httpd_confdir:    %{expand: %%global _httpd_confdir    %%{_sysconfdir}/httpd/conf.d}}
+%{!?_httpd_moddir:    %{expand: %%global _httpd_moddir    %%{_libdir}/httpd/modules}}
+
 %define selinux_policy_types targeted mls
 
 Name: mod_selinux
-Version: 2.2.%%__mod_selinux_revision__%%
+Version: 2.2.2455
 Release: 1%{?dist}
 Summary: Apache/SELinux plus module
 Group: System Environment/Daemons
@@ -9,8 +16,9 @@ License: ASL 2.0
 URL: http://code.google.com/p/sepgsql/
 Source0: http://sepgsql.googlecode.com/files/%{name}-%{version}.tgz
 Source1: %{name}.conf
-BuildRequires: httpd-devel >= 2.2.0 libselinux-devel checkpolicy >= 2.0.19 policycoreutils selinux-policy
+BuildRequires: httpd-devel >= 2.2.0 libselinux-devel checkpolicy >= 2.0.19 policycoreutils selinux-policy-devel
 Requires: kernel >= 2.6.28 httpd >= 2.2.0 policycoreutils selinux-policy
+Requires: httpd-mmn = %{_httpd_mmn}
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 
 %description
@@ -30,7 +38,7 @@ web application contains security bugs or vulnerabilities.
 
 %build
 # mod_selinux.so
-%{__make} %{?_smp_mflags}
+%{__make} %{?_smp_mflags} APXS=%{_httpd_apxs}
 
 # mod_selinux.pp
 for policy in %{selinux_policy_types}
@@ -43,11 +51,21 @@ done
 rm -rf %{buildroot}
 %{__install} -d %{buildroot}%{_libdir}/httpd/modules
 %{__install} -d %{buildroot}%{_datadir}/selinux
-%{__install} -d %{buildroot}%{_sysconfdir}/httpd/conf.d
 
 %{__make} install DESTDIR=%{buildroot}
 
-%{__install} -p -m 644 %{SOURCE1}       %{buildroot}%{_sysconfdir}/httpd/conf.d
+%if "%{_httpd_modconfdir}" != "%{_httpd_confdir}"
+# httpd 2.4.x config
+sed -n /^LoadModule/p %{SOURCE1} > 10-mod_selinux.conf
+sed    /^LoadModule/d %{SOURCE1} > mod_selinux.conf
+touch -r %{SOURCE1} *.conf
+install -Dp 10-mod_selinux.conf %{buildroot}%{_httpd_modconfdir}/10-mod_selinux.conf
+install -Dp mod_selinux.conf %{buildroot}%{_httpd_confdir}/mod_selinux.conf
+%else
+# httpd 2.2.x
+install -Dp -m 644 %{SOURCE1}       %{buildroot}%{_httpd_confdir}/mod_selinux.conf
+%endif
+
 for policy in %{selinux_policy_types}
 do
     %{__install} -d %{buildroot}%{_datadir}/selinux/${policy}
@@ -79,12 +97,27 @@ fi
 %files
 %defattr(-,root,root,-)
 %doc LICENSE README
-%config(noreplace) %{_sysconfdir}/httpd/conf.d/%{name}.conf
+%if "%{_httpd_modconfdir}" != "%{_httpd_confdir}"
+%config(noreplace) %{_httpd_modconfdir}/*.conf
+%endif
+%config(noreplace) %{_httpd_confdir}/*.conf
 %{_libdir}/httpd/modules/%{name}.so
 %{_datadir}/selinux/*/%{name}.pp
 
 %changelog
-* Fri Dec  4 2009 KaiGai Kohei <kaigai@ak.jp.nec.com> - 2.2.2454-1
+* Tue Jul 24 2012 KaiGai Kohei <kaigai@ak.jp.nec.com> - 2.2.2455-1
+- Update towards httpd-2.4.x series
+
+* Tue May  1 2012 Joe Orton <jorton@redhat.com> - 2.2.2454-5
+- packaging fixes (#803075)
+
+* Fri Jan 13 2012 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.2.2454-4
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_17_Mass_Rebuild
+
+* Tue Feb 08 2011 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.2.2454-3
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_15_Mass_Rebuild
+
+* Fri Dec  4 2009 KaiGai Kohei <kaigai@ak.jp.nec.com> - 2.2.2454-2
 - rebuild for the base policy of F-13
 
 * Sat Jul 25 2009 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.2.2015-2
