@@ -295,7 +295,7 @@ static int selinux_set_domain(request_rec *r)
                            : "no need to change handler domain"),
                   context, domain,
                   r->uri, sconf->dirname, r->user,
-                  r->connection->remote_ip);
+                  r->connection->client_ip);
 
     freecon(context);
     return 0;
